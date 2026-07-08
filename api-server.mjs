@@ -3,29 +3,29 @@ import express from 'express';
 import http from 'http';
 import httpProxy from 'http-proxy';
 import cors from 'cors';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
 import CryptoJS from 'crypto-js';
 import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-
-const MSSQL_CONFIG = process.env.MSSQL_SERVER ? {
-  server: process.env.MSSQL_SERVER,
-  port: parseInt(process.env.MSSQL_PORT || '1433'),
-  database: process.env.MSSQL_DATABASE || 'remotedesktop',
-  user: process.env.MSSQL_USER || 'remotedesktop',
-  password: process.env.MSSQL_PASSWORD || '',
-  options: { encrypt: false, trustServerCertificate: true, connectTimeout: 3000, requestTimeout: 5000 },
-} : null;
+import path from 'path';
+import { fileURLToPath } from 'url';
+import cookieParser from 'cookie-parser';
+import admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 const PORT = process.env.PORT || process.env.API_PORT || 4242;
-const JWT_SECRET = process.env.JWT_SECRET || 'myamoto-super-secret-key-change-in-production';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'myamoto-encryption-key-32-char!!';
 const DB_PATH = process.env.DB_PATH || './data/users.json';
 const MESHCTRL_PATH = process.env.MESHCTRL_PATH || findMeshctrl();
+
+try { admin.app(); } catch { admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    }),
+  });
+}
 
 function findMeshctrl() {
   const paths = [
@@ -51,102 +51,6 @@ function writeDB(db) {
   writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
 }
 
-let mssqlPool = null;
-let mssqlUserTable = null;
-let mssqlFailed = false;
-
-async function getMSSQLPool() {
-  if (mssqlPool) return mssqlPool;
-  if (mssqlFailed) return null;
-  if (!MSSQL_CONFIG) return null;
-  try {
-    const sql = require('mssql');
-    console.log("=== MSSQL DEBUG ===");
-    console.log({
-      server: process.env.MSSQL_SERVER,
-      port: process.env.MSSQL_PORT || "1433",
-      database: process.env.MSSQL_DATABASE,
-      user: process.env.MSSQL_USER,
-      hasPassword: !!process.env.MSSQL_PASSWORD,
-      passwordLength: (process.env.MSSQL_PASSWORD || "").length
-    });
-    const connectPromise = sql.connect(MSSQL_CONFIG);
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('MSSQL connect timeout')), 3000)
-    );
-    mssqlPool = await Promise.race([connectPromise, timeoutPromise]);
-    console.log('Connected to MSSQL: ' + MSSQL_CONFIG.server + '/' + MSSQL_CONFIG.database);
-    return mssqlPool;
-  } catch (err) {
-    console.log('MSSQL connection failed:', err.message);
-    mssqlFailed = true;
-    return null;
-  }
-}
-
-async function discoverMSSQLUserTable(pool) {
-  if (mssqlUserTable) return mssqlUserTable;
-  try {
-    const result = await pool.request().query(`
-      SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE COLUMN_NAME IN ('email', 'Email', 'EMAIL')
-        AND TABLE_CATALOG = '${MSSQL_CONFIG.database}'
-    `);
-    const tables = {};
-    for (const row of result.recordset) {
-      const key = row.TABLE_SCHEMA + '.' + row.TABLE_NAME;
-      tables[key] = (tables[key] || 0) + 1;
-    }
-    const best = Object.entries(tables).sort((a, b) => b[1] - a[1])[0];
-    if (best) {
-      mssqlUserTable = best[0];
-      console.log('Discovered user table: ' + mssqlUserTable);
-    }
-    return mssqlUserTable;
-  } catch (err) {
-    console.log('Table discovery failed:', err.message);
-    return null;
-  }
-}
-
-async function findUserInMSSQL(identifier) {
-  const pool = await getMSSQLPool();
-  if (!pool) return null;
-  const table = await discoverMSSQLUserTable(pool);
-  if (!table) {
-    console.log('MSSQL: no user table found with email column');
-    return null;
-  }
-  try {
-    const [schema, tableName] = table.split('.');
-    const sql = require('mssql');
-    const isEmail = identifier.includes('@');
-    const query = isEmail
-      ? `SELECT * FROM ${schema}.${tableName} WHERE email = @val OR Email = @val OR EMAIL = @val`
-      : `SELECT * FROM ${schema}.${tableName} WHERE id = @val OR Id = @val OR ID = @val`;
-    const result = await pool.request()
-      .input('val', sql.NVarChar, identifier)
-      .query(query);
-    const row = result.recordset[0];
-    if (!row) {
-      console.log('MSSQL: user not found by ' + (isEmail ? 'email' : 'id') + '=' + identifier);
-      return null;
-    }
-    const pwd = row.password || row.Password || row.PasswordHash || row.password_hash || '';
-    console.log('MSSQL: found user ' + row.email + ' in ' + table + ', hash starts with ' + (pwd ? pwd.substring(0, 15) : 'empty'));
-    return {
-      id: String(row.id || row.Id || row.ID || row.user_id || ''),
-      email: row.email || row.Email || row.EMAIL || '',
-      name: row.name || row.Name || row.username || row.UserName || row.display_name || '',
-      password: pwd,
-      role: row.role || row.Role || 'user',
-    };
-  } catch (err) {
-    console.log('MSSQL query failed:', err.message);
-    return null;
-  }
-}
-
 function encrypt(text) {
   return CryptoJS.AES.encrypt(text, ENCRYPTION_KEY).toString();
 }
@@ -155,12 +59,20 @@ function decrypt(encryptedText) {
   return bytes.toString(CryptoJS.enc.Utf8);
 }
 
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
+  let token = null;
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ message: 'No token' });
+  if (auth && auth.startsWith('Bearer ')) {
+    token = auth.split(' ')[1];
+  } else if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  }
+  if (!token) return res.status(401).json({ message: 'No token' });
   try {
-    const decoded = jwt.verify(auth.split(' ')[1], JWT_SECRET);
-    req.userId = decoded.id;
+    const decoded = await getAuth().verifyIdToken(token);
+    req.uid = decoded.uid;
+    req.userId = decoded.uid;
+    req.email = decoded.email;
     req.userEmail = decoded.email;
     next();
   } catch {
@@ -269,71 +181,64 @@ proxy.on('error', (err, req, res) => {
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    let user = null;
-    let source = 'json';
-    const db = readDB();
-    user = db.users.find(u => u.email === email);
-    if (!user && MSSQL_CONFIG) {
-      user = await findUserInMSSQL(email);
-      if (user) source = 'mssql';
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'Token required' });
+    const decoded = await getAuth().verifyIdToken(token);
+    const { uid, email, name } = decoded;
+    const userRef = getFirestore().collection('users').doc(uid);
+    let userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      await userRef.set({
+        uid,
+        email,
+        name: name || email || '',
+        role: 'user',
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      userDoc = await userRef.get();
     }
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-    let passwordOk = false;
-    if (user.password && (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$'))) {
-      passwordOk = await bcrypt.compare(password, user.password);
-    } else if (user.password) {
-      const crypto = await import('crypto');
-      const shaHash = crypto.createHash('sha256').update(password).digest('hex');
-      const shaLower = crypto.createHash('sha256').update(password.toLowerCase()).digest('hex');
-      passwordOk = (password === user.password) || (shaHash === user.password.toLowerCase()) || (shaLower === user.password.toLowerCase()) || (user.password === shaHash);
-    }
-    if (!passwordOk) {
-      console.log('LOGIN FAIL from ' + source + ': ' + email + ' hash=' + (user.password ? user.password.substring(0, 20) + '...' : 'empty'));
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-    console.log('LOGIN OK from ' + source + ': ' + email);
-    const access_token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '24h' });
-    res.json({ access_token, user: { id: user.id, email: user.email, name: user.name } });
+    const data = userDoc.data();
+    console.log('LOGIN OK via Firebase: ' + email);
+    const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
+    res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: false, maxAge: ONE_YEAR, path: '/' });
+    res.json({ user: { id: uid, email, name: data.name || name || email || '', role: data.role || 'user' } });
   } catch (err) {
     console.log('LOGIN ERROR:', err.message);
-    res.status(500).json({ message: err.message });
+    res.status(401).json({ message: 'Invalid token' });
   }
 });
 
 app.post('/api/auth/me', authMiddleware, async (req, res) => {
   try {
-    let user = null;
-    const db = readDB();
-    user = db.users.find(u => u.id === req.userId || u.email === req.userEmail);
-    if (!user && MSSQL_CONFIG && !mssqlFailed) {
-      try {
-        user = await Promise.race([
-          findUserInMSSQL(req.userId),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-        ]);
-      } catch (_) { /* MSSQL timeout or error, will use JSON fallback */ }
-      if (!user && req.userEmail) {
-        try {
-          user = await Promise.race([
-            findUserInMSSQL(req.userEmail),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-          ]);
-        } catch (_) { /* MSSQL timeout or error */ }
-      }
-    }
-    if (!user) return res.status(404).json({ message: 'User not found' });
-    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role || 'user' } });
+    const userDoc = await getFirestore().collection('users').doc(req.uid).get();
+    if (!userDoc.exists) return res.status(404).json({ message: 'User not found' });
+    const data = userDoc.data();
+    res.json({ user: { id: req.uid, email: data.email, name: data.name, role: data.role || 'user' } });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
 app.post('/api/auth/logout', (_req, res) => {
+  res.clearCookie('token', { path: '/' });
   res.json({ message: 'Logged out' });
+});
+
+app.post('/api/auth/refresh-token', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'Token required' });
+    await getAuth().verifyIdToken(token);
+    const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
+    res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: false, maxAge: ONE_YEAR, path: '/' });
+    res.json({ ok: true });
+  } catch {
+    res.status(401).json({ message: 'Invalid token' });
+  }
 });
 
 app.get('/api/devices', authMiddleware, async (req, res) => {
@@ -534,23 +439,6 @@ app.post('/api/remote/:deviceId/command', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/seed', (req, res) => {
-  try {
-    const db = readDB();
-    const exists = db.users.find(u => u.email === 'admin@myamoto.com');
-    if (!exists) {
-      const id = 'user_' + Date.now();
-      db.users.push({ id, email: 'admin@myamoto.com', name: 'Admin', password: bcrypt.hashSync('admin123', 10), role: 'admin' });
-      writeDB(db);
-      res.json({ message: 'Admin created (admin@myamoto.com / admin123)' });
-    } else {
-      res.json({ message: 'Admin already exists' });
-    }
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
-
 function ensureDb() {
   if (!existsSync(DB_PATH)) {
     const dir = DB_PATH.substring(0, DB_PATH.lastIndexOf('/'));
@@ -560,31 +448,20 @@ function ensureDb() {
   }
 }
 
-const cmd = process.argv[2];
-if (cmd === 'seed') {
-  ensureDb();
-  const db = readDB();
-  const exists = db.users.find(u => u.email === 'admin@myamoto.com');
-  if (!exists) {
-    db.users.push({ id: 'user_' + Date.now(), email: 'admin@myamoto.com', name: 'Admin', password: bcrypt.hashSync('admin123', 10), role: 'admin' });
-    writeDB(db);
-    console.log('Admin created: admin@myamoto.com / admin123');
-  } else {
-    console.log('Admin already exists');
-  }
-} else {
-  ensureDb();
-  const server = http.createServer((req, res) => {
-    if (req.url && req.url.startsWith('/api/')) {
-      app(req, res);
-    } else {
-      proxy.web(req, res, { target: MESHCENTRAL_TARGET });
-    }
-  });
-  server.on('upgrade', (req, socket, head) => {
-    proxy.ws(req, socket, head, { target: MESHCENTRAL_TARGET });
-  });
-  server.listen(PORT, () => {
-    console.log(`Myamoto server running on port ${PORT} (API + Proxy -> ${MESHCENTRAL_TARGET})`);
-  });
-}
+ensureDb();
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const STATIC_DIR = path.resolve(__dirname, '..', 'frontend', 'out');
+
+app.use(express.static(STATIC_DIR));
+app.use((req, res) => {
+  proxy.web(req, res, { target: MESHCENTRAL_TARGET });
+});
+
+const server = http.createServer(app);
+server.on('upgrade', (req, socket, head) => {
+  proxy.ws(req, socket, head, { target: MESHCENTRAL_TARGET });
+});
+server.listen(PORT, () => {
+  console.log(`Myamoto server running on port ${PORT} (API + Static + Proxy -> ${MESHCENTRAL_TARGET})`);
+});
