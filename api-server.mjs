@@ -345,7 +345,13 @@ app.get('/api/remote/session/:deviceId', authMiddleware, async (req, res) => {
     if (!urlMatch) return res.status(500).json({ message: 'Failed to create share link' });
     const shareUrl = urlMatch[1].trim();
     const cMatch = shareUrl.match(/[?&]c=([^&]+)/);
-    const proxyHost = process.env.PROXY_HOST || `http://localhost:${process.env.API_PORT || 4242}`;
+    let proxyHost = process.env.PROXY_HOST;
+    if (!proxyHost) {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(500).json({ message: 'PROXY_HOST env var is required in production' });
+      }
+      proxyHost = `http://localhost:${process.env.API_PORT || 4242}`;
+    }
     const proxyUrl = cMatch ? `${proxyHost}/sharing?c=${encodeURIComponent(cMatch[1])}` : shareUrl;
     res.json({ url: proxyUrl, share_url: proxyUrl, server_url: server.server_url, device_name: 'Device' });
   } catch (err) {
@@ -416,8 +422,18 @@ app.post('/api/remote/:deviceId/share', authMiddleware, async (req, res) => {
     ]);
     const urlMatch = output.match(/URL: (.+)/);
     if (!urlMatch) return res.status(500).json({ message: 'Failed to parse sharing URL' });
+    const shareUrl = urlMatch[1].trim();
+    const cMatch = shareUrl.match(/[?&]c=([^&]+)/);
+    let proxyHost = process.env.PROXY_HOST;
+    if (!proxyHost) {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(500).json({ message: 'PROXY_HOST env var is required in production' });
+      }
+      proxyHost = `http://localhost:${process.env.API_PORT || 4242}`;
+    }
+    const proxyUrl = cMatch ? `${proxyHost}/sharing?c=${encodeURIComponent(cMatch[1])}` : shareUrl;
     const typeLabels = { desktop: 'Full Control', terminal: 'Terminal Only', files: 'File Transfer' };
-    res.json({ share_url: urlMatch[1].trim(), type: type || 'desktop', label: typeLabels[type] || type });
+    res.json({ share_url: proxyUrl, type: type || 'desktop', label: typeLabels[type] || type });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
