@@ -344,15 +344,16 @@ app.get('/api/remote/session/:deviceId', authMiddleware, async (req, res) => {
     const urlMatch = output.match(/URL: (.+)/);
     if (!urlMatch) return res.status(500).json({ message: 'Failed to create share link' });
     const shareUrl = urlMatch[1].trim();
-    const cMatch = shareUrl.match(/[?&]c=([^&]+)/);
-    let proxyHost = process.env.PROXY_HOST;
-    if (!proxyHost) {
-      if (process.env.NODE_ENV === 'production') {
-        return res.status(500).json({ message: 'PROXY_HOST env var is required in production' });
-      }
-      proxyHost = `http://localhost:${process.env.API_PORT || 4242}`;
+    const parsed = new URL(shareUrl);
+    if (process.env.NODE_ENV === 'production') {
+      parsed.hostname = 'panel.myamoto.com';
+      parsed.protocol = 'https:';
+    } else {
+      parsed.hostname = 'localhost';
+      parsed.port = process.env.API_PORT || '4242';
+      parsed.protocol = 'http:';
     }
-    const proxyUrl = cMatch ? `${proxyHost}/sharing?c=${encodeURIComponent(cMatch[1])}` : shareUrl;
+    const proxyUrl = parsed.toString();
     res.json({ url: proxyUrl, share_url: proxyUrl, server_url: server.server_url, device_name: 'Device' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -423,15 +424,16 @@ app.post('/api/remote/:deviceId/share', authMiddleware, async (req, res) => {
     const urlMatch = output.match(/URL: (.+)/);
     if (!urlMatch) return res.status(500).json({ message: 'Failed to parse sharing URL' });
     const shareUrl = urlMatch[1].trim();
-    const cMatch = shareUrl.match(/[?&]c=([^&]+)/);
-    let proxyHost = process.env.PROXY_HOST;
-    if (!proxyHost) {
-      if (process.env.NODE_ENV === 'production') {
-        return res.status(500).json({ message: 'PROXY_HOST env var is required in production' });
-      }
-      proxyHost = `http://localhost:${process.env.API_PORT || 4242}`;
+    const parsed = new URL(shareUrl);
+    if (process.env.NODE_ENV === 'production') {
+      parsed.hostname = 'panel.myamoto.com';
+      parsed.protocol = 'https:';
+    } else {
+      parsed.hostname = 'localhost';
+      parsed.port = process.env.API_PORT || '4242';
+      parsed.protocol = 'http:';
     }
-    const proxyUrl = cMatch ? `${proxyHost}/sharing?c=${encodeURIComponent(cMatch[1])}` : shareUrl;
+    const proxyUrl = parsed.toString();
     const typeLabels = { desktop: 'Full Control', terminal: 'Terminal Only', files: 'File Transfer' };
     res.json({ share_url: proxyUrl, type: type || 'desktop', label: typeLabels[type] || type });
   } catch (err) {
