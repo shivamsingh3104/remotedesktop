@@ -345,7 +345,7 @@ app.get('/api/remote/session/:deviceId', authMiddleware, async (req, res) => {
     if (!urlMatch) return res.status(500).json({ message: 'Failed to create share link' });
     const shareUrl = urlMatch[1].trim();
     const cMatch = shareUrl.match(/[?&]c=([^&]+)/);
-    const proxyHost = process.env.PROXY_HOST || `http://localhost:${PORT}`;
+    const proxyHost = process.env.PROXY_HOST || `http://localhost:${process.env.API_PORT || 4242}`;
     const proxyUrl = cMatch ? `${proxyHost}/sharing?c=${encodeURIComponent(cMatch[1])}` : shareUrl;
     res.json({ url: proxyUrl, share_url: proxyUrl, server_url: server.server_url, device_name: 'Device' });
   } catch (err) {
