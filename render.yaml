@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: myamoto-api
+    runtime: node
+    buildCommand: npm install
+    startCommand: node api-server.mjs
+    envVars:
+      - key: MSSQL_SERVER
+        value: 103.212.120.227
+      - key: MSSQL_DATABASE
+        value: remotedesktop
+      - key: MSSQL_USER
+        value: remotedesktop
+      - key: MSSQL_PASSWORD
+        value: madhav@105.
+      - key: JWT_SECRET
+        value: myamoto-super-secret-key-change-in-production
+      - key: ENCRYPTION_KEY
+        value: myamoto-encryption-key-32-char!!

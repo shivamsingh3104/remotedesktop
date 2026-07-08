@@ -1,0 +1,10 @@
+# OPTIONAL: Uncomment if your hosting supports mod_proxy
+# This proxies /api/* calls from your static frontend to the Myamoto API server
+#
+# Make sure mod_rewrite and mod_proxy are enabled (Ask your hosting provider if unsure)
+#
+#RewriteEngine On
+#RewriteRule ^api/(.*)$ https://connect.myamoto.com:3001/api/$1 [P,L]
+#
+# If the above doesn't work, update NEXT_PUBLIC_API_URL in src/lib/api-client.ts
+# to point directly to https://connect.myamoto.com:3001/api before building.
