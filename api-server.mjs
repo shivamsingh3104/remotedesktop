@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import CryptoJS from 'crypto-js';
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -21,7 +21,7 @@ const MSSQL_CONFIG = process.env.MSSQL_SERVER ? {
   options: { encrypt: false, trustServerCertificate: true, connectTimeout: 3000, requestTimeout: 5000 },
 } : null;
 
-const PORT = process.env.API_PORT || 3000;
+const PORT = process.env.PORT || process.env.API_PORT || 4242;
 const JWT_SECRET = process.env.JWT_SECRET || 'myamoto-super-secret-key-change-in-production';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'myamoto-encryption-key-32-char!!';
 const DB_PATH = process.env.DB_PATH || './data/users.json';
@@ -47,7 +47,7 @@ function readDB() {
 }
 function writeDB(db) {
   const dir = DB_PATH.substring(0, DB_PATH.lastIndexOf('/'));
-  if (!existsSync(dir)) { import('fs').then(fs => fs.mkdirSync(dir, { recursive: true })); }
+  if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); }
   writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
 }
 
@@ -545,7 +545,7 @@ app.get('/api/seed', (req, res) => {
 function ensureDb() {
   if (!existsSync(DB_PATH)) {
     const dir = DB_PATH.substring(0, DB_PATH.lastIndexOf('/'));
-    if (!existsSync(dir)) { try { import('fs').then(fs => fs.mkdirSync(dir, { recursive: true })); } catch {} }
+    if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); }
     writeDB({ users: [], servers: [] });
     console.log('Created empty database at ' + DB_PATH);
   }
