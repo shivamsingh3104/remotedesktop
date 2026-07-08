@@ -61,6 +61,15 @@ async function getMSSQLPool() {
   if (!MSSQL_CONFIG) return null;
   try {
     const sql = require('mssql');
+    console.log("=== MSSQL DEBUG ===");
+    console.log({
+      server: process.env.MSSQL_SERVER,
+      port: process.env.MSSQL_PORT || "1433",
+      database: process.env.MSSQL_DATABASE,
+      user: process.env.MSSQL_USER,
+      hasPassword: !!process.env.MSSQL_PASSWORD,
+      passwordLength: (process.env.MSSQL_PASSWORD || "").length
+    });
     const connectPromise = sql.connect(MSSQL_CONFIG);
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('MSSQL connect timeout')), 3000)
