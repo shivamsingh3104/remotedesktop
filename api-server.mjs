@@ -97,7 +97,7 @@ function runMeshctrl(command, serverUrl, username, password, extraArgs = []) {
 }
 
 const MESHCENTRAL_TARGET = process.env.MESHCENTRAL_URL || 'https://connect.myamoto.com';
-const PROXY_HOST = process.env.PROXY_HOST || (process.env.NODE_ENV === 'production' ? 'remotedesktop-stwr.onrender.com' : 'localhost');
+const PROXY_HOST = process.env.PROXY_HOST || (process.env.NODE_ENV === 'production' ? 'panel.myamoto.com' : 'localhost');
 
 const TOOLBAR_HTML = `
 <div id="myamoto-toolbar">
