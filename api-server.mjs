@@ -97,6 +97,7 @@ function runMeshctrl(command, serverUrl, username, password, extraArgs = []) {
 }
 
 const MESHCENTRAL_TARGET = process.env.MESHCENTRAL_URL || 'https://connect.myamoto.com';
+const PROXY_HOST = process.env.PROXY_HOST || (process.env.NODE_ENV === 'production' ? 'remotedesktop-stwr.onrender.com' : 'localhost');
 
 const TOOLBAR_HTML = `
 <div id="myamoto-toolbar">
@@ -345,14 +346,9 @@ app.get('/api/remote/session/:deviceId', authMiddleware, async (req, res) => {
     if (!urlMatch) return res.status(500).json({ message: 'Failed to create share link' });
     const shareUrl = urlMatch[1].trim();
     const parsed = new URL(shareUrl);
-    if (process.env.NODE_ENV === 'production') {
-      parsed.hostname = 'panel.myamoto.com';
-      parsed.protocol = 'https:';
-    } else {
-      parsed.hostname = 'localhost';
-      parsed.port = process.env.API_PORT || '4242';
-      parsed.protocol = 'http:';
-    }
+    parsed.hostname = PROXY_HOST;
+    parsed.protocol = PROXY_HOST === 'localhost' ? 'http:' : 'https:';
+    if (PROXY_HOST === 'localhost') parsed.port = process.env.API_PORT || '4242';
     const proxyUrl = parsed.toString();
     res.json({ url: proxyUrl, share_url: proxyUrl, server_url: server.server_url, device_name: 'Device' });
   } catch (err) {
@@ -425,14 +421,9 @@ app.post('/api/remote/:deviceId/share', authMiddleware, async (req, res) => {
     if (!urlMatch) return res.status(500).json({ message: 'Failed to parse sharing URL' });
     const shareUrl = urlMatch[1].trim();
     const parsed = new URL(shareUrl);
-    if (process.env.NODE_ENV === 'production') {
-      parsed.hostname = 'panel.myamoto.com';
-      parsed.protocol = 'https:';
-    } else {
-      parsed.hostname = 'localhost';
-      parsed.port = process.env.API_PORT || '4242';
-      parsed.protocol = 'http:';
-    }
+    parsed.hostname = PROXY_HOST;
+    parsed.protocol = PROXY_HOST === 'localhost' ? 'http:' : 'https:';
+    if (PROXY_HOST === 'localhost') parsed.port = process.env.API_PORT || '4242';
     const proxyUrl = parsed.toString();
     const typeLabels = { desktop: 'Full Control', terminal: 'Terminal Only', files: 'File Transfer' };
     res.json({ share_url: proxyUrl, type: type || 'desktop', label: typeLabels[type] || type });
