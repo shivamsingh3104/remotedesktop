@@ -5,7 +5,7 @@ import httpProxy from 'http-proxy';
 import cors from 'cors';
 import CryptoJS from 'crypto-js';
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cookieParser from 'cookie-parser';
@@ -15,10 +15,10 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 const PORT = process.env.PORT || process.env.API_PORT || 4242;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'myamoto-encryption-key-32-char!!';
-const DB_PATH = process.env.DB_PATH || './data/users.json';
 const MESHCTRL_PATH = process.env.MESHCTRL_PATH || findMeshctrl();
 
-try { admin.app(); } catch { admin.initializeApp({
+try { admin.app(); } catch {
+  admin.initializeApp({
     credential: admin.credential.cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
@@ -26,6 +26,8 @@ try { admin.app(); } catch { admin.initializeApp({
     }),
   });
 }
+
+const db = getFirestore();
 
 function findMeshctrl() {
   const paths = [
@@ -41,14 +43,13 @@ function findMeshctrl() {
   return 'meshctrl.js';
 }
 
-function readDB() {
-  if (!existsSync(DB_PATH)) return { users: [], servers: [] };
-  return JSON.parse(readFileSync(DB_PATH, 'utf8'));
+async function getServerConfig(userId) {
+  const doc = await db.collection('serverConfigs').doc(userId).get();
+  return doc.exists ? doc.data() : null;
 }
-function writeDB(db) {
-  const dir = DB_PATH.substring(0, DB_PATH.lastIndexOf('/'));
-  if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); }
-  writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+
+async function saveServerConfig(userId, data) {
+  await db.collection('serverConfigs').doc(userId).set(data, { merge: true });
 }
 
 function encrypt(text) {
@@ -98,6 +99,8 @@ function runMeshctrl(command, serverUrl, username, password, extraArgs = []) {
 
 const MESHCENTRAL_TARGET = process.env.MESHCENTRAL_URL || 'https://connect.myamoto.com';
 const PROXY_HOST = process.env.PROXY_HOST || process.env.RENDER_EXTERNAL_URL || (process.env.NODE_ENV === 'production' ? 'remotedesktop-stwr.onrender.com' : 'localhost');
+const PROXY_PORT = PROXY_HOST === 'localhost' ? (process.env.API_PORT || '4242') : '443';
+const PROXY_PROTOCOL = PROXY_HOST === 'localhost' ? 'http:' : 'https:';
 
 const TOOLBAR_HTML = `
 <div id="myamoto-toolbar">
@@ -147,14 +150,13 @@ window.addEventListener('load',function(){var h=44;['p11','p12','p13','LeftSideT
 const proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true, selfHandleResponse: true });
 
 proxy.on('proxyRes', (proxyRes, req, res) => {
-  delete proxyRes.headers['x-frame-options'];
-  delete proxyRes.headers['X-Frame-Options'];
-  delete proxyRes.headers['x-frame-options'];
-  delete proxyRes.headers['content-security-policy'];
-  delete proxyRes.headers['Content-Security-Policy'];
+  const headers = { ...proxyRes.headers };
+  delete headers['x-frame-options'];
+  delete headers['X-Frame-Options'];
+  delete headers['content-security-policy'];
+  delete headers['Content-Security-Policy'];
 
   const statusCode = proxyRes.statusCode;
-  const headers = { ...proxyRes.headers };
   const chunks = [];
 
   proxyRes.on('data', chunk => chunks.push(chunk));
@@ -189,21 +191,28 @@ app.use(cookieParser());
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
+function rewriteShareUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hostname = PROXY_HOST;
+    parsed.protocol = PROXY_PROTOCOL;
+    if (PROXY_HOST === 'localhost') parsed.port = PROXY_PORT;
+    return parsed.toString();
+  } catch { return url; }
+}
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { token } = req.body;
     if (!token) return res.status(400).json({ message: 'Token required' });
     const decoded = await getAuth().verifyIdToken(token);
     const { uid, email, name } = decoded;
-    const userRef = getFirestore().collection('users').doc(uid);
+    const userRef = db.collection('users').doc(uid);
     let userDoc = await userRef.get();
     if (!userDoc.exists) {
       await userRef.set({
-        uid,
-        email,
-        name: name || email || '',
-        role: 'user',
-        createdAt: FieldValue.serverTimestamp(),
+        uid, email, name: name || email || '',
+        role: 'user', createdAt: FieldValue.serverTimestamp(),
       });
       userDoc = await userRef.get();
     }
@@ -220,7 +229,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/auth/me', authMiddleware, async (req, res) => {
   try {
-    const userDoc = await getFirestore().collection('users').doc(req.uid).get();
+    const userDoc = await db.collection('users').doc(req.uid).get();
     if (!userDoc.exists) return res.status(404).json({ message: 'User not found' });
     const data = userDoc.data();
     res.json({ user: { id: req.uid, email: data.email, name: data.name, role: data.role || 'user' } });
@@ -249,8 +258,7 @@ app.post('/api/auth/refresh-token', async (req, res) => {
 
 app.get('/api/devices', authMiddleware, async (req, res) => {
   try {
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'MeshCentral not configured. Please configure in Settings.' });
     if (server.status !== 'connected') return res.status(400).json({ message: 'Connection not tested. Go to Settings and test the connection first.' });
     const password = decrypt(server.encrypted_password);
@@ -272,10 +280,9 @@ app.get('/api/devices', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/meshcentral/config', authMiddleware, (req, res) => {
+app.get('/api/meshcentral/config', authMiddleware, async (req, res) => {
   try {
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.json({ configured: false });
     res.json({ configured: true, server_url: server.server_url, bot_username: server.bot_username, status: server.status || 'unknown' });
   } catch (err) {
@@ -287,18 +294,16 @@ app.post('/api/meshcentral/config', authMiddleware, async (req, res) => {
   try {
     const { server_url, bot_username, bot_password } = req.body;
     if (!server_url || !bot_username) return res.status(400).json({ message: 'Server URL and username required' });
-    const db = readDB();
-    let idx = db.servers.findIndex(s => s.user_id === req.userId);
+    const existing = await getServerConfig(req.userId);
     const entry = {
       user_id: req.userId,
       server_url: server_url.replace(/\/$/, ''),
       bot_username,
-      encrypted_password: bot_password ? encrypt(bot_password) : (idx >= 0 ? db.servers[idx].encrypted_password : ''),
+      encrypted_password: bot_password ? encrypt(bot_password) : (existing ? existing.encrypted_password : ''),
       status: 'configured',
+      device_group_id: existing?.device_group_id || null,
     };
-    if (idx >= 0) db.servers[idx] = entry;
-    else db.servers.push(entry);
-    writeDB(db);
+    await saveServerConfig(req.userId, entry);
     res.json({ message: 'Configuration saved successfully' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -307,13 +312,11 @@ app.post('/api/meshcentral/config', authMiddleware, async (req, res) => {
 
 app.post('/api/meshcentral/test', authMiddleware, async (req, res) => {
   try {
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     await runMeshctrl('ServerInfo', server.server_url, server.bot_username, password);
-    server.status = 'connected';
-    writeDB(db);
+    await saveServerConfig(req.userId, { status: 'connected' });
     res.json({ success: true, message: 'Connection successful' });
   } catch (err) {
     res.status(500).json({ success: false, message: `Connection failed: ${err.message}` });
@@ -322,8 +325,7 @@ app.post('/api/meshcentral/test', authMiddleware, async (req, res) => {
 
 app.get('/api/meshcentral/download-link', authMiddleware, async (req, res) => {
   try {
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     let groupId = server.device_group_id || null;
@@ -340,18 +342,13 @@ app.get('/api/meshcentral/download-link', authMiddleware, async (req, res) => {
         const match = createOutput.trim().match(/(mesh\/\/\S+)/);
         if (match) {
           groupId = match[1];
-          const idx = db.servers.findIndex(s => s.user_id === req.userId);
-          if (idx >= 0) {
-            db.servers[idx].device_group_id = groupId;
-            writeDB(db);
-          }
+          await saveServerConfig(req.userId, { device_group_id: groupId });
         }
       } catch {}
     }
     if (!groupId) return res.status(500).json({ message: 'Failed to find or create device group' });
     const link = await runMeshctrl('GenerateInviteLink', server.server_url, server.bot_username, password, ['--id', groupId, '--hours', '0']);
-    const downloadUrl = link.trim();
-    res.json({ download_url: downloadUrl, filename: 'MeshCentralAgentInstaller' });
+    res.json({ download_url: link.trim(), filename: 'MeshCentralAgentInstaller' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -359,9 +356,8 @@ app.get('/api/meshcentral/download-link', authMiddleware, async (req, res) => {
 
 app.get('/api/remote/session/:deviceId', authMiddleware, async (req, res) => {
   try {
-    const { deviceId } = req.params;
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const deviceId = req.params.deviceId;
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     const output = await runMeshctrl('DeviceSharing', server.server_url, server.bot_username, password, [
@@ -369,13 +365,8 @@ app.get('/api/remote/session/:deviceId', authMiddleware, async (req, res) => {
     ]);
     const urlMatch = output.match(/URL: (.+)/);
     if (!urlMatch) return res.status(500).json({ message: 'Failed to create share link' });
-    const shareUrl = urlMatch[1].trim();
-    const parsed = new URL(shareUrl);
-    parsed.hostname = PROXY_HOST;
-    parsed.protocol = PROXY_HOST === 'localhost' ? 'http:' : 'https:';
-    if (PROXY_HOST === 'localhost') parsed.port = process.env.API_PORT || '4242';
-    const proxyUrl = parsed.toString();
-    res.json({ url: proxyUrl, share_url: proxyUrl, server_url: server.server_url, device_name: 'Device' });
+    const shareUrl = rewriteShareUrl(urlMatch[1].trim());
+    res.json({ url: shareUrl, share_url: shareUrl, server_url: server.server_url, device_name: 'Device' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -383,9 +374,8 @@ app.get('/api/remote/session/:deviceId', authMiddleware, async (req, res) => {
 
 app.get('/api/remote/:deviceId/info', authMiddleware, async (req, res) => {
   try {
-    const { deviceId } = req.params;
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const deviceId = req.params.deviceId;
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     const output = await runMeshctrl('DeviceInfo', server.server_url, server.bot_username, password, ['--id', deviceId, '--json']);
@@ -397,12 +387,11 @@ app.get('/api/remote/:deviceId/info', authMiddleware, async (req, res) => {
 
 app.post('/api/remote/:deviceId/power', authMiddleware, async (req, res) => {
   try {
-    const { deviceId } = req.params;
+    const deviceId = req.params.deviceId;
     const { action } = req.body;
     const validActions = ['restart', 'shutdown', 'sleep', 'wake'];
     if (!validActions.includes(action)) return res.status(400).json({ message: 'Invalid action' });
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     const flagMap = { restart: '--reset', shutdown: '--off', sleep: '--sleep', wake: '--wake' };
@@ -415,11 +404,10 @@ app.post('/api/remote/:deviceId/power', authMiddleware, async (req, res) => {
 
 app.post('/api/remote/:deviceId/message', authMiddleware, async (req, res) => {
   try {
-    const { deviceId } = req.params;
+    const deviceId = req.params.deviceId;
     const { message, title } = req.body;
     if (!message) return res.status(400).json({ message: 'Message required' });
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     const args = ['--id', deviceId, '--msg', message, '--timeout', '30000'];
@@ -433,10 +421,9 @@ app.post('/api/remote/:deviceId/message', authMiddleware, async (req, res) => {
 
 app.post('/api/remote/:deviceId/share', authMiddleware, async (req, res) => {
   try {
-    const { deviceId } = req.params;
+    const deviceId = req.params.deviceId;
     const { type } = req.body;
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     const output = await runMeshctrl('DeviceSharing', server.server_url, server.bot_username, password, [
@@ -444,14 +431,9 @@ app.post('/api/remote/:deviceId/share', authMiddleware, async (req, res) => {
     ]);
     const urlMatch = output.match(/URL: (.+)/);
     if (!urlMatch) return res.status(500).json({ message: 'Failed to parse sharing URL' });
-    const shareUrl = urlMatch[1].trim();
-    const parsed = new URL(shareUrl);
-    parsed.hostname = PROXY_HOST;
-    parsed.protocol = PROXY_HOST === 'localhost' ? 'http:' : 'https:';
-    if (PROXY_HOST === 'localhost') parsed.port = process.env.API_PORT || '4242';
-    const proxyUrl = parsed.toString();
+    const shareUrl = rewriteShareUrl(urlMatch[1].trim());
     const typeLabels = { desktop: 'Full Control', terminal: 'Terminal Only', files: 'File Transfer' };
-    res.json({ share_url: proxyUrl, type: type || 'desktop', label: typeLabels[type] || type });
+    res.json({ share_url: shareUrl, type: type || 'desktop', label: typeLabels[type] || type });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -459,11 +441,10 @@ app.post('/api/remote/:deviceId/share', authMiddleware, async (req, res) => {
 
 app.post('/api/remote/:deviceId/command', authMiddleware, async (req, res) => {
   try {
-    const { deviceId } = req.params;
+    const deviceId = req.params.deviceId;
     const { command } = req.body;
     if (!command) return res.status(400).json({ message: 'Command required' });
-    const db = readDB();
-    const server = db.servers.find(s => s.user_id === req.userId);
+    const server = await getServerConfig(req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
     const output = await runMeshctrl('RunCommand', server.server_url, server.bot_username, password, ['--id', deviceId, '--run', command, '--reply']);
@@ -472,17 +453,6 @@ app.post('/api/remote/:deviceId/command', authMiddleware, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
-function ensureDb() {
-  if (!existsSync(DB_PATH)) {
-    const dir = DB_PATH.substring(0, DB_PATH.lastIndexOf('/'));
-    if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); }
-    writeDB({ users: [], servers: [] });
-    console.log('Created empty database at ' + DB_PATH);
-  }
-}
-
-ensureDb();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = path.resolve(__dirname, '..', 'frontend', 'out');
@@ -497,5 +467,7 @@ server.on('upgrade', (req, socket, head) => {
   proxy.ws(req, socket, head, { target: MESHCENTRAL_TARGET });
 });
 server.listen(PORT, () => {
-  console.log(`Myamoto server running on port ${PORT} (API + Static + Proxy -> ${MESHCENTRAL_TARGET})`);
+  console.log(`Myamoto server running on port ${PORT}`);
+  console.log(`PROXY_HOST: ${PROXY_HOST}`);
+  console.log(`MESHCENTRAL: ${MESHCENTRAL_TARGET}`);
 });
