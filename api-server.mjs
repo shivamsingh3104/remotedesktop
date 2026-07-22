@@ -84,7 +84,7 @@ function runMeshctrl(command, serverUrl, username, password, extraArgs = []) {
   return new Promise((resolve, reject) => {
     const wssUrl = serverUrl.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
     const args = [MESHCTRL_PATH, command, '--url', wssUrl, '--loginuser', username, '--loginpass', password, ...extraArgs];
-    const child = spawn(process.execPath, args, { timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, args, { timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
@@ -321,12 +321,32 @@ app.get('/api/meshcentral/download-link', authMiddleware, async (req, res) => {
     const server = db.servers.find(s => s.user_id === req.userId);
     if (!server) return res.status(400).json({ message: 'Not configured' });
     const password = decrypt(server.encrypted_password);
-    const groupsOutput = await runMeshctrl('ListDeviceGroups', server.server_url, server.bot_username, password, ['--json']);
-    const groups = JSON.parse(groupsOutput);
-    const group = groups[0];
-    if (!group) return res.status(400).json({ message: 'No device group found' });
-    const link = await runMeshctrl('GenerateInviteLink', server.server_url, server.bot_username, password, ['--id', group._id, '--hours', '0']);
-    res.json({ download_url: link.trim(), filename: 'MeshCentralAgentInstaller' });
+    let groupId = server.device_group_id || null;
+    if (!groupId) {
+      try {
+        const groupsOutput = await runMeshctrl('ListDeviceGroups', server.server_url, server.bot_username, password, ['--json']);
+        const groups = JSON.parse(groupsOutput);
+        if (groups.length > 0) groupId = groups[0]._id;
+      } catch {}
+    }
+    if (!groupId) {
+      try {
+        const createOutput = await runMeshctrl('AddDeviceGroup', server.server_url, server.bot_username, password, ['--name', 'Myamoto-Devices', '--json']);
+        const match = createOutput.trim().match(/(mesh\/\/\S+)/);
+        if (match) {
+          groupId = match[1];
+          const idx = db.servers.findIndex(s => s.user_id === req.userId);
+          if (idx >= 0) {
+            db.servers[idx].device_group_id = groupId;
+            writeDB(db);
+          }
+        }
+      } catch {}
+    }
+    if (!groupId) return res.status(500).json({ message: 'Failed to find or create device group' });
+    const link = await runMeshctrl('GenerateInviteLink', server.server_url, server.bot_username, password, ['--id', groupId, '--hours', '0']);
+    const downloadUrl = link.trim();
+    res.json({ download_url: downloadUrl, filename: 'MeshCentralAgentInstaller' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
