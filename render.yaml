@@ -5,15 +5,19 @@ services:
     buildCommand: npm install
     startCommand: node api-server.mjs
     envVars:
-      - key: MSSQL_SERVER
-        value: 103.212.120.227
-      - key: MSSQL_DATABASE
-        value: remotedesktop
-      - key: MSSQL_USER
-        value: remotedesktop
-      - key: MSSQL_PASSWORD
-        value: madhav@105.
-      - key: JWT_SECRET
-        value: myamoto-super-secret-key-change-in-production
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4242
+      - key: PROXY_HOST
+        value: remotedesktop-stwr.onrender.com
+      - key: MESHCENTRAL_URL
+        value: https://connect.myamoto.com
       - key: ENCRYPTION_KEY
         value: myamoto-encryption-key-32-char!!
+      - key: FIREBASE_PROJECT_ID
+        value: remotedesktop-8d92e
+      - key: FIREBASE_CLIENT_EMAIL
+        value: firebase-adminsdk-fbsvc@remotedesktop-8d92e.iam.gserviceaccount.com
+      - key: FIREBASE_PRIVATE_KEY
+        value: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDa9Cy0OjThylvb\nfzfRRScHUkuUa48nGXQU/AbWmQn/Ql01Vgx9m9ZwDjIrBimcCpnd4Mrl31EC6P3Q\nsTzlAAsBM/nkqyPwomM5Q61wfrfSokz5mcHhp8MimN5HfbdvkD2GfJGSgGZ0k+eP\nyLoxIMADv4YpbGHuc30DHAtDNzBN581Rv/y+rOvXp9vvhNarfnUtMhgiDfyM/BaB\nN/afCKMZNdr52i6QGsmy2m0MHlC2P8OWeWP1BFYkmhXKTk9JpxIFpkrPGSf8ZK5o\nuH8jFUpmPB5YnJ2ICUewK/t9a7E71Ipu4U3ODs1BeOsyfRS2yHVIza7sS71somS2\nPjuWop55AgMBAAECggEAUmpbk2Ffe2f8qIPb4kkp1i8rZMwRv9FsaOOuvUMwyKTV\nydhAbl1k25v0VU6GBgbVgPd22Az1hOdndpDoT3hzK/pBA0pKBm9RcwIe/DuufLn7\nyG4QVRydLl4lOPrAu90q0377Go57QkFUBcK0Fv7xV9fVK61wtV1CPpPlR2E0LPYz\nl1qMt4z2jUNiO6lWfIlSJzNWgumbDecvs88MZ7hwBmCTt8biD3nquPtRdaxZcedr\na7p5TX8FvO5/pACGc/esOv/H5ofwtaLoVVREDq3WJuQ+k7St8u/AfjeIcZXTWhsF\nwgeeZOcFmuEYw9W1q3Ot5+bYn3pBJZHwBty4rQIwwwKBgQD+e/9AhACSeW9fXHzt\nLD57tvi8ItKwdA/RImgRzp9oKBPbIF6n0UwlcTY8Kc5HRcamf+ZzLys1bP6iEizl\nn1ByDcaqseixoCCjq3wOt04dsn7XQ8yz/jFKbmU33ECr0qap5CMJws9o8NFfczg3\n5WV7UAUPhtHwaULj0IYsELfzowKBgQDcQgFjFE4r1tHKNByD6suH0lSie/rJAzSO\nG2gsLu0/FaKOZIad05v93OfP4ncQ2f0jrSofBV25qbGPjqOdqZcCvD+2dtKFkWiG\nVYQc/vmgii7tqHD7Qx+Ycv3wtBa9HwRWQ9bp1MgYkzrcFgqnjvC8bTPGwAbgv34E\nkgwFMJfnMwKBgE8YGOhjXo4n4f6gj09jrfPjlYFbzWH8YKIecHwAXTkRI8K6V9EO\n0vzcKAAg+jTasfgzzltEcMiFHMsgnQWtM2KPd4y8CNeULjDQbplgTY4bWSLstqXG\nvmkk0J7A/PSqXxR0jJNPEgnKtzhUZkexK45c+4Ws4Hk5LgoCWIE/nPzDAoGBAK99\n488GqbYiRise1C2DUUFZo1eHAu1QIXqseZbimOMvoMJldCCiLuLZNNYc8ZM6rIfV\ne/8VbnT0sOXZ16FSM2DZjsYZ7GjBz49g6Y+U1F5GW1e+Yq6/75eu34f+ZTOwV+tH\nyB+tCvURsc8TvM9+g28ObzeHXrOJv6VynCMycYWjAoGBAN60xW7xwIXJYUtSKpgt\nYdsZq2WMLdgAimXCC0O+JRQqZ+I8HadCrZGLwozO4xpsgCmetcDGGau/Vyv1eBXv\n+5gDDZp7ImsbZVLnqRb1EE+zWHfDCUUS65XeKn8eObf1pLiT1KbUJd8kNqoEdTv1\ntaeBJMH6Ml9Qf996IiLnbPxN\n-----END PRIVATE KEY-----"

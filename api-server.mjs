@@ -97,7 +97,7 @@ function runMeshctrl(command, serverUrl, username, password, extraArgs = []) {
 }
 
 const MESHCENTRAL_TARGET = process.env.MESHCENTRAL_URL || 'https://connect.myamoto.com';
-const PROXY_HOST = process.env.PROXY_HOST || (process.env.NODE_ENV === 'production' ? 'panel.myamoto.com' : 'localhost');
+const PROXY_HOST = process.env.PROXY_HOST || process.env.RENDER_EXTERNAL_URL || (process.env.NODE_ENV === 'production' ? 'remotedesktop-stwr.onrender.com' : 'localhost');
 
 const TOOLBAR_HTML = `
 <div id="myamoto-toolbar">
@@ -149,6 +149,7 @@ const proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true, selfHa
 proxy.on('proxyRes', (proxyRes, req, res) => {
   delete proxyRes.headers['x-frame-options'];
   delete proxyRes.headers['X-Frame-Options'];
+  delete proxyRes.headers['x-frame-options'];
   delete proxyRes.headers['content-security-policy'];
   delete proxyRes.headers['Content-Security-Policy'];
 
@@ -161,10 +162,12 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
     const buffer = Buffer.concat(chunks);
     let body = buffer.toString('utf8');
     const contentType = headers['content-type'] || '';
-    if (req.url && req.url.includes('/sharing') && contentType.includes('text/html')) {
+    if (contentType.includes('text/html')) {
       body = body.replace(/<body[^>]*>/i, match => match + TOOLBAR_HTML);
-      body = body.replace(/top!=self[^;]*top\.location[^;]*;?\s*/gi, '');
+      body = body.replace(/top\s*!=\s*self[^;]*top\.location[^;]*;?\s*/gi, '');
+      body = body.replace(/if\s*\(\s*top\s*!=\s*self\s*\)[^}]*}/gi, '');
       body = body.replace(/<meta[^>]*http-equiv=["']X-Frame-Options["'][^>]*>/gi, '');
+      body = body.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '');
       headers['content-length'] = Buffer.byteLength(body);
     }
     res.writeHead(statusCode, headers);
@@ -183,6 +186,8 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 app.post('/api/auth/login', async (req, res) => {
   try {
